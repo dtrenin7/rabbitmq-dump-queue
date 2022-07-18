@@ -22,6 +22,7 @@ var (
 	outputDir   = flag.String("output-dir", ".", "Directory in which to save the dumped messages")
 	full        = flag.Bool("full", false, "Dump the message, its properties and headers")
 	verbose     = flag.Bool("verbose", false, "Print progress")
+	find        = flag.String("find", "", "search string (case specific)")
 )
 
 func main() {
@@ -31,7 +32,7 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	err := dumpMessagesFromQueue(*uri, *queue, *maxMessages, *outputDir)
+	err := dumpMessagesFromQueue(*uri, *queue, *maxMessages, *outputDir, *find)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
@@ -50,7 +51,7 @@ func dial(amqpURI string) (*amqp091.Connection, error) {
 	return conn, err
 }
 
-func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, outputDir string) error {
+func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, outputDir, find string) error {
 	if queueName == "" {
 		return fmt.Errorf("Must supply queue name")
 	}
@@ -84,13 +85,17 @@ func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 			break
 		}
 
-		err = saveMessageToFile(msg.Body, outputDir, messagesReceived)
+		if find != "" && strings.Index(string(msg.Body), find) == -1{
+			continue
+		}
+
+		err = saveMessageToFile(msg.Body, outputDir, messagesReceived, find)
 		if err != nil {
 			return fmt.Errorf("Save message: %s", err)
 		}
 
 		if *full {
-			err = savePropsAndHeadersToFile(msg, outputDir, messagesReceived)
+			err = savePropsAndHeadersToFile(msg, outputDir, messagesReceived, find)
 			if err != nil {
 				return fmt.Errorf("Save props and headers: %s", err)
 			}
@@ -100,8 +105,8 @@ func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 	return nil
 }
 
-func saveMessageToFile(body []byte, outputDir string, counter uint) error {
-	filePath := generateFilePath(outputDir, counter)
+func saveMessageToFile(body []byte, outputDir string, counter uint, find string) error {
+	filePath := generateFilePath(outputDir, counter, find)
 	err := ioutil.WriteFile(filePath, body, 0644)
 	if err != nil {
 		return err
@@ -142,7 +147,7 @@ func getProperties(msg amqp091.Delivery) map[string]interface{} {
 	return props
 }
 
-func savePropsAndHeadersToFile(msg amqp091.Delivery, outputDir string, counter uint) error {
+func savePropsAndHeadersToFile(msg amqp091.Delivery, outputDir string, counter uint, find string) error {
 	extras := make(map[string]interface{})
 	extras["properties"] = getProperties(msg)
 	extras["headers"] = msg.Headers
@@ -152,7 +157,7 @@ func savePropsAndHeadersToFile(msg amqp091.Delivery, outputDir string, counter u
 		return err
 	}
 
-	filePath := generateFilePath(outputDir, counter) + "-headers+properties.json"
+	filePath := generateFilePath(outputDir, counter, find) + "-headers+properties.json"
 	err = ioutil.WriteFile(filePath, data, 0644)
 	if err != nil {
 		return err
@@ -163,8 +168,11 @@ func savePropsAndHeadersToFile(msg amqp091.Delivery, outputDir string, counter u
 	return nil
 }
 
-func generateFilePath(outputDir string, counter uint) string {
-	return path.Join(outputDir, fmt.Sprintf("msg-%04d", counter))
+func generateFilePath(outputDir string, counter uint, find string) string {
+	if find == "" {
+		find = "msg"
+	}
+	return path.Join(outputDir, find + fmt.Sprintf("-%04d", counter))
 }
 
 func verboseLog(msg string) {
