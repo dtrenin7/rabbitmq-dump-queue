@@ -23,6 +23,7 @@ var (
 	full        = flag.Bool("full", false, "Dump the message, its properties and headers")
 	verbose     = flag.Bool("verbose", false, "Print progress")
 	find        = flag.String("find", "", "search string (case specific)")
+	dictionary	= flag.String("dict", "", "search strings (case specific) taken from dictionary (file, separated by carriage return)")
 )
 
 func main() {
@@ -56,6 +57,33 @@ func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 		return fmt.Errorf("Must supply queue name")
 	}
 
+	search := []string{}
+	searchLen := int(0)
+	if *dictionary != "" {
+		file, err := os.Open(*dictionary)
+		if err != nil {
+			fmt.Printf("Can't open dictionary file %s", dictionary)
+			os.Exit(1)
+		}
+		defer file.Close()
+		dict, err := ioutil.ReadAll(file)
+		if err != nil {
+			fmt.Printf("Can't read dictionary %s", dictionary)
+			os.Exit(1)
+		}
+		search = strings.Split(string(dict), "\n")
+		searchLen = len(search)
+	}
+
+	if find != "" {
+		search = append(search, find)
+		searchLen = len(search)
+	}
+
+	if searchLen > 0 {
+		fmt.Printf("Searching for %d items...\n", searchLen)
+	}
+
 	conn, err := dial(amqpURI)
 	if err != nil {
 		return fmt.Errorf("Dial: %s", err)
@@ -71,6 +99,8 @@ func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 		return fmt.Errorf("Channel: %s", err)
 	}
 
+	total := 0
+
 	verboseLog(fmt.Sprintf("Pulling messages from queue %q", queueName))
 	for messagesReceived := uint(0); maxMessages == 0 || messagesReceived < maxMessages; messagesReceived++ {
 		msg, ok, err := channel.Get(queueName,
@@ -85,28 +115,41 @@ func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 			break
 		}
 
-		if find != "" && strings.Index(string(msg.Body), find) == -1{
-			continue
+		found := ""
+		searching := -1
+		if searchLen > 0 {
+			for i := 0; i < searchLen; i++ {
+				if search[i] != "" && strings.Index(string(msg.Body), search[i]) != -1 {
+					found = search[i]
+					searching = i
+					total++
+					break
+				}
+			}
+			if found == "" {
+				continue
+			}
+			fmt.Printf("Found %s => ", found)
 		}
 
-		err = saveMessageToFile(msg.Body, outputDir, messagesReceived, find)
+		err = saveMessageToFile(msg.Body, outputDir, messagesReceived, found, searching)
 		if err != nil {
 			return fmt.Errorf("Save message: %s", err)
 		}
 
 		if *full {
-			err = savePropsAndHeadersToFile(msg, outputDir, messagesReceived, find)
+			err = savePropsAndHeadersToFile(msg, outputDir, messagesReceived, found, searching)
 			if err != nil {
 				return fmt.Errorf("Save props and headers: %s", err)
 			}
 		}
 	}
-
+	fmt.Printf("FOUND %d ITEMS TOTAL\n", total)
 	return nil
 }
 
-func saveMessageToFile(body []byte, outputDir string, counter uint, find string) error {
-	filePath := generateFilePath(outputDir, counter, find)
+func saveMessageToFile(body []byte, outputDir string, counter uint, find string, searching int) error {
+	filePath := generateFilePath(outputDir, counter, find, searching)
 	err := ioutil.WriteFile(filePath, body, 0644)
 	if err != nil {
 		return err
@@ -147,7 +190,7 @@ func getProperties(msg amqp091.Delivery) map[string]interface{} {
 	return props
 }
 
-func savePropsAndHeadersToFile(msg amqp091.Delivery, outputDir string, counter uint, find string) error {
+func savePropsAndHeadersToFile(msg amqp091.Delivery, outputDir string, counter uint, find string, searching int) error {
 	extras := make(map[string]interface{})
 	extras["properties"] = getProperties(msg)
 	extras["headers"] = msg.Headers
@@ -157,7 +200,7 @@ func savePropsAndHeadersToFile(msg amqp091.Delivery, outputDir string, counter u
 		return err
 	}
 
-	filePath := generateFilePath(outputDir, counter, find) + "-headers+properties.json"
+	filePath := generateFilePath(outputDir, counter, find, searching) + "-headers+properties.json"
 	err = ioutil.WriteFile(filePath, data, 0644)
 	if err != nil {
 		return err
@@ -168,9 +211,11 @@ func savePropsAndHeadersToFile(msg amqp091.Delivery, outputDir string, counter u
 	return nil
 }
 
-func generateFilePath(outputDir string, counter uint, find string) string {
+func generateFilePath(outputDir string, counter uint, find string, searching int) string {
 	if find == "" {
 		find = "msg"
+	} else if searching >= 0 {
+		find = fmt.Sprintf("%03d-%s", searching, find)
 	}
 	return path.Join(outputDir, find + fmt.Sprintf("-%04d", counter))
 }
