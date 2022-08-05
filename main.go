@@ -217,7 +217,7 @@ func generateFilePath(outputDir string, counter uint, find string, searching int
 	} else if searching >= 0 {
 		find = fmt.Sprintf("%03d-%s", searching, find)
 	}
-	return path.Join(outputDir, find + fmt.Sprintf("-%04d", counter))
+	return path.Join(outputDir, find + fmt.Sprintf("-%04d.json", counter))
 }
 
 func verboseLog(msg string) {
