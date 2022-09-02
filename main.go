@@ -22,6 +22,7 @@ var (
 	outputDir   = flag.String("output-dir", ".", "Directory in which to save the dumped messages")
 	full        = flag.Bool("full", false, "Dump the message, its properties and headers")
 	verbose     = flag.Bool("verbose", false, "Print progress")
+	unzip     = flag.Bool("unzip", false, "extract gzipped content")
 	find        = flag.String("find", "", "search string (case specific)")
 	dictionary	= flag.String("dict", "", "search strings (case specific) taken from dictionary (file, separated by carriage return)")
 )
@@ -149,6 +150,17 @@ func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 }
 
 func saveMessageToFile(body []byte, outputDir string, counter uint, find string, searching int) error {
+	if *unzip {
+		gz := GZipped{}
+		gz.data.Write(body)
+		if _, data, err := gz.Unpack(); err == nil {
+			body = data
+		} else {
+			fmt.Printf("ERROR: %s", err.Error())
+			return err
+		}
+	}
+
 	filePath := generateFilePath(outputDir, counter, find, searching)
 	err := ioutil.WriteFile(filePath, body, 0644)
 	if err != nil {
